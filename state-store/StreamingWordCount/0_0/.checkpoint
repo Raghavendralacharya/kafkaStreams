@@ -1,0 +1,6 @@
+0
+4
+StreamingWordCount-KSTREAM-REDUCE-STATE-STORE-0000000003-changelog 0 7
+StreamingWordCount-KSTREAM-REDUCE-STATE-STORE-0000000004-changelog 0 0
+StreamingWordCount-count-changelog 0 213
+StreamingWordCount-KSTREAM-AGGREGATE-STATE-STORE-0000000004-changelog 0 283
