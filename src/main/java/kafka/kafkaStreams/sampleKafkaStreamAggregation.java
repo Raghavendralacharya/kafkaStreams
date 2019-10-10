@@ -12,6 +12,7 @@ import org.apache.kafka.common.serialization.Serde;
 import org.apache.kafka.common.serialization.Serdes;
 import org.apache.kafka.common.utils.Bytes;
 import org.apache.kafka.streams.KafkaStreams;
+import org.apache.kafka.streams.KeyValue;
 import org.apache.kafka.streams.StreamsBuilder;
 import org.apache.kafka.streams.StreamsConfig;
 import org.apache.kafka.streams.kstream.Consumed;
@@ -26,6 +27,7 @@ import org.apache.kafka.streams.kstream.Produced;
 import org.apache.kafka.streams.kstream.Suppressed;
 import org.apache.kafka.streams.kstream.Suppressed.BufferConfig;
 import org.apache.kafka.streams.kstream.TimeWindows;
+import org.apache.kafka.streams.kstream.ValueMapper;
 import org.apache.kafka.streams.kstream.Windowed;
 import org.apache.kafka.streams.state.WindowStore;
 import org.json.simple.JSONObject;
@@ -58,11 +60,11 @@ public class sampleKafkaStreamAggregation {
 			// logger.info("Start Reading Messages");
 			StreamsBuilder streamsBuilder = new StreamsBuilder();
 			// createWordCountStream(streamsBuilder);
-			//windowStream(streamsBuilder);
+			// windowStream(streamsBuilder);
 			System.out.println("Stream data");
 			filterTopic(streamsBuilder);
-			//windowData(streamsBuilder);
-			//joinTopic(streamsBuilder);
+			// windowData(streamsBuilder);
+			// joinTopic(streamsBuilder);
 			@SuppressWarnings("resource")
 			KafkaStreams streams = new KafkaStreams(streamsBuilder.build(), props);
 			streams.start();
@@ -99,7 +101,7 @@ public class sampleKafkaStreamAggregation {
 					.flatMapValues(value -> Arrays.asList(pattern.split(value.toLowerCase())))
 					.groupBy((key, word) -> word)
 					.windowedBy(TimeWindows.of(Duration.ofSeconds(5).plus(Duration.ofMinutes(1)))).count();
-			
+
 			wordcount.toStream().peek((k, v) -> System.out.println("Key = " + k.key() + " Value = " + v.toString()));
 			wordcount.toStream((k, v) -> k.key()).to(outputTopic);
 
@@ -119,7 +121,8 @@ public class sampleKafkaStreamAggregation {
 		final Serde<Long> longSerde = Serdes.Long();
 		try {
 			System.out.println("filter data");
-			final KStream<String, String> textLines = builder.stream(inputTopic, Consumed.with(Serdes.String(), Serdes.String()));
+			final KStream<String, String> textLines = builder.stream(inputTopic,
+					Consumed.with(Serdes.String(), Serdes.String()));
 //			textLines.foreach(new ForeachAction<String, String>() {
 //				public void apply(String key, String value) {
 //					System.out.println(key + ": " + value);
@@ -146,22 +149,57 @@ public class sampleKafkaStreamAggregation {
 				}
 			});
 			FatalEvent.peek((k, v) -> System.out.println("Key = " + k + "Value = " + v));
-			KTable<Windowed<String>, Long> Fatalcount =  FatalEvent
-					.groupBy((key, word) -> "value")
-					//.groupByKey(Grouped.with(Serdes.String(), Serdes.String()))
-             .windowedBy(TimeWindows.of(Duration.ofMinutes(3)).advanceBy(Duration.ofMinutes(1)).grace(Duration.ofMillis(0)))
-             .count(Materialized.<String, Long, WindowStore<Bytes,byte[]>>as("count").withCachingDisabled().withKeySerde(Serdes.String()))
-             .suppress(Suppressed.untilWindowCloses(Suppressed.BufferConfig.unbounded()));
+			KTable<Windowed<String>, Long> Fatalcount = FatalEvent.groupBy((key, word) -> "value")
+					// .groupByKey(Grouped.with(Serdes.String(), Serdes.String()))
+					.windowedBy(TimeWindows.of(Duration.ofMinutes(3)).advanceBy(Duration.ofMinutes(1))
+							.grace(Duration.ofMillis(0)))
+					.count(Materialized.<String, Long, WindowStore<Bytes, byte[]>>as("count").withCachingDisabled()
+							.withKeySerde(Serdes.String()))
+					.suppress(Suppressed.untilWindowCloses(Suppressed.BufferConfig.unbounded()));
 			
-			Fatalcount.toStream().peek((k, v) -> System.out.println("Key = " + k + "Value = " + v));
-			Fatalcount.toStream((k, v) -> k.toString()).to(outputTopic,Produced.with(Serdes.String(), Serdes.Long()));
-			//.map((k, v) -> new KeyValue<>(k.key(), v))
+//			final KStream<Windowed<String>, Long> FatalStream = Fatalcount.toStream();
+//			Fatalcount.mapValues(new ValueMapper<String, String>() {
+//				@Override
+//				public String apply(String s) {
+//					JSONObject obj = new JSONObject();
+//					obj.put("count", s);
+//					return obj.toString();
+//				}
+//			});
+			final KStream<Object, Object> FatalStream = Fatalcount.toStream()
+					.map((key, value) -> new KeyValue<>(keyMapper(key), valueMapper(value)));
+			// Fatalcount.toStream().mapValues(v -> );
+			//final KStream<Object, Object> FatalStream = Fatalcount.toStream().map((key, value) -> new KeyValue<>(key.key(), "Count for product with ID 123: " + value));
+			FatalStream.peek((k, v) -> System.out.println("Key = " + k.toString() + "Value = " + v.toString()));
 			
+			FatalStream.to(outputTopic);
+			// .map((k, v) -> new KeyValue<>(k.key(), v))
+
 		} catch (Exception e) {
 			System.out.println("error" + e);
 		}
 	}
 
+	@SuppressWarnings("unchecked")
+	static String valueMapper(long s) {
+		JSONObject obj = new JSONObject();
+		obj.put("count", s);
+		return obj.toString();
+
+	}
+	@SuppressWarnings("unchecked")
+	static String keyMapper(Windowed<String> key) {
+		JSONObject obj = new JSONObject();
+		obj.put("window_start", key.window().start());
+		obj.put("window_end",key.window().end());
+		obj.put("window_start_ins", key.window().startTime());
+		obj.put("window_end_ins",key.window().endTime());
+		obj.put("key", key.key());
+		//obj.put("topic",)
+		return obj.toString();
+
+	}
+	
 	static void windowData(final StreamsBuilder builder) {
 		final Serde<String> stringSerde = Serdes.String();
 		final Serde<Long> longSerde = Serdes.Long();
@@ -196,8 +234,8 @@ public class sampleKafkaStreamAggregation {
 			FatalEvent.peek((k, v) -> System.out.println("Key = " + k + "Value = " + v));
 //			KTable<Windowed<String>, Long> Fatalcount = FatalEvent
 //					.groupBy((key, word) -> "value")
-             //.windowedBy(TimeWindows.of(Duration.ofMinutes(3)).advanceBy(Duration.ofMinutes(1))).count();
-					
+			// .windowedBy(TimeWindows.of(Duration.ofMinutes(3)).advanceBy(Duration.ofMinutes(1))).count();
+
 //			KTable<Windowed<String>, Long> Fatalcount = FatalEvent
 //					.groupBy((key, word) -> "value").windowedBy(TimeWindows.of(Duration.ofMinutes(3)))
 //		    .aggregate(
@@ -205,12 +243,10 @@ public class sampleKafkaStreamAggregation {
 //		    	(aggKey, newValue, aggValue) -> aggValue + newValue, /* adder */
 //		      Materialized.<String, Long, WindowStore<Bytes, byte[]>>as("time-windowed-aggregated-stream-store") /* state store name */
 //		        .withValueSerde(Serdes.Long())); /* serde for aggregate value */
-			
-			
-			final KTable<String, String> Fatalcount = textLines
-			.groupBy((key, word) -> "value")
-			.reduce((aggValue, newValue) -> aggValue + newValue);
-			
+
+			final KTable<String, String> Fatalcount = textLines.groupBy((key, word) -> "value")
+					.reduce((aggValue, newValue) -> aggValue + newValue);
+
 			Fatalcount.toStream().peek((k, v) -> System.out.println("Key = " + k + "Value = " + v));
 			Fatalcount.toStream((k, v) -> k.toString()).to(outputTopic);
 		} catch (Exception e) {
@@ -218,11 +254,11 @@ public class sampleKafkaStreamAggregation {
 		}
 
 	}
-	
+
 	static void joinTopic(final StreamsBuilder builder) {
 		try {
 			System.out.println("join Topic");
-			ArrayList<String> inputTopiclist=new ArrayList<String>();
+			ArrayList<String> inputTopiclist = new ArrayList<String>();
 			inputTopiclist.add("plaintextinput");
 			inputTopiclist.add("plaintextinput1");
 			final KStream<String, String> textLines = builder.stream(inputTopiclist);
